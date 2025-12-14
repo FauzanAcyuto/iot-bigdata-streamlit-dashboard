@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import boto3
 import duckdb
 
 # ====== CONFIG ======
@@ -13,6 +14,7 @@ with open(Path(CREDENTIALS_PATH), "r") as file:
     aws_creds = creds["AWS"]
 
 TARGET_BUCKET_PATH = "s3://smartdbucket/datalogparquet"
+BUCKET_NAME = "smartdbucket"
 SOURCE_KEY_GLOB = "s3://smartdbucket/datalog"
 
 # logging parameters
@@ -83,28 +85,63 @@ def init_duckdb_connection(aws_credentials):
         conn.close()
 
 
-# def get_file_keys(bucket,prefix):
-#     s3 = boto3.client('s3')
-#     paginator = s3.get_paginator('list_objects_v2')
-
-#     keys = []
-#     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-#         for obj in page.get('Contents', []):
-#             keys.append(obj['Key'])
-
-# return keys
-
-
-def get_datalog_from_s3_per_hiveperiod(conn, s3key: str, targetpath: str):
+def get_all_keys_in_district(aws_credentials, bucket, distrik, date):
     logger = logging.getLogger(__name__)
 
-    logger.info(f"Grabbing datalog for device {s3key} from s3")
+    existing_keys = list(aws_credentials.keys())
+    required_keys = ["aws_secret_access_key", "aws_access_key_id", "aws_region"]
+    if not set(required_keys) <= set(existing_keys):
+        logger.exception(
+            f"AWS Credentials doesn't contain required keys {required_keys}"
+        )
+        raise
 
+    logger.info("Getting deviceids")
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=aws_credentials["aws_access_key_id"],
+        aws_secret_access_key=aws_credentials["aws_secret_access_key"],
+        region_name=aws_credentials["aws_region"],
+    )
+    paginator = s3.get_paginator("list_objects_v2")
+
+    deviceids = []
+    for page in paginator.paginate(
+        Bucket=bucket, Prefix=f"datalog/{distrik}/", Delimiter="/"
+    ):
+        for prefix in page.get("CommonPrefixes", []):
+            deviceids.append(prefix["Prefix"])
+
+    logger.info(f"{len(deviceids)} deviceids obtained for district {distrik}")
+
+    keys = []
+    # r = list(range(0, 24))
+    # datelist = [f"{date}{i:02d}" for i in r]
+
+    for device_prefix in deviceids:
+        print("device_prefix: ", device_prefix)
+        date_prefix = f"{device_prefix}{date}"  # e.g., "jobsite1/device1/20240101"
+        print("date_prefix: ", date_prefix)
+        for page in paginator.paginate(Bucket=bucket, Prefix=date_prefix):
+            for obj in page.get("Contents", []):
+                keys.append(obj["Key"])
+
+    logger.info(f"{len(keys)} keys obtained for {distrik} on day {date}")
+
+    return keys, deviceids
+
+
+def get_datalog_from_s3_per_hiveperiod(conn, s3key_list: list, targetpath: str):
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"Grabbing datalog for device {s3key_list} from s3")
+
+    s3key_list_string = "['" + "', '".join(s3key_list) + "']"
     data = conn.sql(f"""
         SELECT 
             *,
             filename AS source_file
-        FROM read_json_auto('{s3key}', filename=true)
+        FROM read_json_auto('{s3key_list_string}', filename=true)
     """)
 
     logger.info("Got the main data from s3")
@@ -112,7 +149,8 @@ def get_datalog_from_s3_per_hiveperiod(conn, s3key: str, targetpath: str):
     row_count = data.count("*").fetchone()[0]
 
     if row_count == 0:
-        logger.warning(f"No data found for {s3key}")
+        logger.warning(f"No data found for {s3key_list_string}")
+
         return None
 
     logger.info("Writing file to disk as parquet")
@@ -122,9 +160,7 @@ def get_datalog_from_s3_per_hiveperiod(conn, s3key: str, targetpath: str):
         TO '{targetpath}/datalog' 
         (
             FORMAT parquet,
-            COMPRESSION snappy,
-            PARTITION_BY (hiveperiod, deviceid),
-            APPEND
+            COMPRESSION snappy
         )
     """)
 
@@ -132,13 +168,10 @@ def get_datalog_from_s3_per_hiveperiod(conn, s3key: str, targetpath: str):
 
     conn.execute(f"""
         COPY (SELECT 
-            deviceid,
-            CAST(to_timestamp(heartbeat) AS DATE) AS utc_date,
-            HOUR(to_timestamp(heartbeat)) AS utc_hour,
-            COUNT(*) AS row_ct
+            filename,
+            'SUCCESS' as conversion_status
         FROM data
-        GROUP BY 1, 2, 3
-        ORDER BY 1, 2, 3)
+        )
         TO '{targetpath}/metadata' 
         (
             FORMAT parquet,
@@ -152,27 +185,33 @@ def get_datalog_from_s3_per_hiveperiod(conn, s3key: str, targetpath: str):
     return None
 
 
-# def update_conversion_log(conn,bucketname,prefix):
-#     logger = logging.getLogger(__name__)
-#     logger.info("test")
+def datalog_compacter(conn, targetpath: str):
+    logger = logging.getLogger(__name__)
 
+    logger.info("Initializing data compacter")
 
-#     result = conn.sql("""
-#     SELECT
-#     FROM
-#     """)
+    logger.info("Compacted data ")
 
 
 def main():
     logger = logging.getLogger()
     # List files that need to be processed
+    keys, devices = get_all_keys_in_district(aws_creds, BUCKET_NAME, "BRCG", "20251212")
+
+    with open(Path("data/keys.csv"), "a") as file:
+        for row in keys:
+            row = f"{row}\n"
+            file.write(row)
+
     with init_duckdb_connection(aws_creds) as conn:
         get_datalog_from_s3_per_hiveperiod(
             conn,
-            "s3://smartdbucket/datalog/BRCG/SLS30I009/20251212*/20251212*.txt.gz",
-            TARGET_BUCKET_PATH,
+            keys,
+            "data",
+            # TARGET_BUCKET_PATH,
         )
 
+    logger.info("All Done!")
     # get data and write into into partitions in one go
 
     ## Partition will be /distrik/hiveperiod/deviceid/someparquetfiles
