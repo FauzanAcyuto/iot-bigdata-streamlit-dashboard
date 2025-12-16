@@ -15,14 +15,14 @@ with open(Path(CREDENTIALS_PATH), "r") as file:
     creds = json.load(file)
     aws_creds = creds["AWS"]
 
-# TARGET_BUCKET_PATH = "s3://smartdbucket/datalog/cis_smartd_tbl_iot_scania"
-TARGET_BUCKET_PATH = "data"
+TARGET_BUCKET_PATH = "s3://smartdbucket/datalog/cis_smartd_tbl_iot_scania"
+# TARGET_BUCKET_PATH = "data"
 BUCKET_NAME = "smartdbucket"
 SOURCE_KEY_GLOB = "s3://smartdbucket/datalog"
 HIVEPERIOD = "20251213"
 DISTRIK = "BRCB"
 RAM_LIMIT = "20GB"
-KEY_LIMIT_PER_RUN = 1000
+KEY_LIMIT_PER_RUN = 2000
 
 # logging parameters
 LOG_LEVEL = logging.INFO
@@ -216,6 +216,9 @@ def get_pending_keys_sql(engine, distrik, file_limit=1000):
         list_of_keys = [row[0] for row in result]
 
     row_count = len(list_of_keys)
+    if row_count == 0:
+        logger.info("No more pending data to process!")
+        raise Exception
     logger.info(f"Got {row_count} of keys to work on.")
     return list_of_keys
 
@@ -256,7 +259,7 @@ def get_datalog_from_s3_per_hiveperiod(
             '{distrik}' AS dstrct_code,
             CAST(to_timestamp(heartbeat) + INTERVAL 8 HOURS AS DATE) as hiveperiod,
             filename AS source_file
-        FROM read_json_auto({s3key_list_string}, filename=true)
+        FROM read_json_auto({s3key_list_string}, filename=true, sample_size=-1, union_by_name=true)
     """)
 
     logger.info("Got the main data from s3")
@@ -334,4 +337,5 @@ def main():
 
 if __name__ == "__main__":
     setup_logger(LOG_LEVEL, LOG_FILE_PATH, LOG_SIZE_MB, LOG_FILES_TO_KEEP)
-    main()
+    while True:
+        main()
