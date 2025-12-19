@@ -3,8 +3,8 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 
-import duckdb
 import boto3
+import duckdb
 import plotly.express as px
 import streamlit as st
 
@@ -14,7 +14,9 @@ with open(Path(CREDENTIALS_PATH), "r") as file:
     creds = json.load(file)
     aws_creds = creds["AWS"]
 aws_creds
-aws_creds.pop('aws_bucket')
+aws_creds.pop("aws_bucket")
+
+
 @contextmanager
 def init_duckdb_connection(aws_credentials: dict, ram_limit: str):
     logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ def init_duckdb_connection(aws_credentials: dict, ram_limit: str):
     finally:
         conn.close()
 
+
 s3 = boto3.client(
     "s3",
     aws_access_key_id=aws_creds["aws_access_key_id"],
@@ -59,9 +62,9 @@ response = s3.list_objects_v2(
     Prefix=obj_key,
 )
 
-if 'Contents' in response:
-    for obj in response['Contents']:
-        print(obj['Key'])
+if "Contents" in response:
+    for obj in response["Contents"]:
+        print(obj["Key"])
 else:
     print(f"No objects found in '{obj_key}'")
 
