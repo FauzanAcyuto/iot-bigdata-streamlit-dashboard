@@ -50,6 +50,7 @@ We will be implementing the following solutions to achieve that goal:
 Immense performance improvement:
 
 1. Querying data from the old bucket to the news cut down query times from 15+ minutes to just 2 seconds.
+
 Before:
 ![before](https://github.com/FauzanAcyuto/iot-bigdata-streamlit-dashboard/blob/master/v1-datalog-compacter/media/before.jpeg)
 After:
