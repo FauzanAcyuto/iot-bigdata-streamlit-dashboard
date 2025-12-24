@@ -1,0 +1,6 @@
+[server]
+enableWebsocketCompression = false
+enableXsrfProtection = false
+
+[browser]
+//serverAddress = "streamlit.yutotech.org"
