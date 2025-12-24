@@ -1,5 +1,7 @@
 # Datalog Compacter System - Version 1
 
+![banner](media/data compacter project.png)
+
 ## Why?
 
 In Mata Hati 02 (My Smart Mining IoT Project) we had 600+ devices installed across two job sites, these devices each generate 1 row per second containing telemetry from various sensors (179 fields) which comes out to around 2.16 Million rows per hour.
@@ -83,3 +85,30 @@ smartdbucket
 
 but wait. why not partition by unitno?
 This is because partitioning by unitno comes at a trade off. 600 devices means that each hiveperiod will have 600 files of ~20MB files each, this slows down reads as parquet files are more efficient with large file sizes. So well combine all units into one file to get 150-250MB files for each day.
+
+### Enrich data with necesary columns
+
+The source data didn't have the two most frequently queried columns either, fortunately adding them is very easy with DuckDB since is based on the SQL syntax
+
+```python
+import duckdb
+
+data = conn.sql(
+    f"""
+    SELECT 
+        *,
+        '{distrik}' AS dstrct_code,
+        CAST(to_timestamp(heartbeat) + INTERVAL 8 HOURS AS DATE) as hiveperiod,
+        filename AS source_file
+    FROM read_json_auto({s3key_list_string}, filename=true, sample_size=-1, union_by_name=true)
+"""
+)
+```
+
+### Process the data using larger than memory zero-copy architecture
+
+This is the strong point of pyarrow based systems such as DuckDB or Polars (and of course pyspark does it best with 100GB+ datasets).
+
+Using DuckDB relations I never load the data into memory in the course of the script, instead I give duckdb a memory limit (4-20GB) to allow it to process data faster or to preserve resources
+
+![zero-copy](media/zero copy.png)
