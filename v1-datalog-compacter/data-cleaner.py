@@ -54,12 +54,12 @@ def get_s3_datalog():
     with init_duckdb_connection(aws_creds, "4GB") as conn:
         data = conn.sql(
             """
-            SELECT distrik, hiveperiod,heartbeat, CAST(
+            SELECT dstrct_code, hiveperiod,heartbeat, CAST(
             CASE
-                WHEN heartbeat < 10000000000 THEN make_timestamp(heartbeat * 1000000)
-                WHEN heartbeat < 10000000000000 THEN make_timestamp(heartbeat * 1000)
-                WHEN heartbeat < 10000000000000000 THEN make_timestamp(heartbeat)
-                ELSE make_timestamp(heartbeat / 1000)
+                WHEN heartbeat < 10000000000 THEN make_timestamp(CAST(heartbeat * 1000000 as BIGINT) )
+                WHEN heartbeat < 10000000000000 THEN make_timestamp(CAST(heartbeat * 1000 as BIGINT))
+                WHEN heartbeat < 10000000000000000 THEN make_timestamp(CAST(heartbeat as BIGINT))
+                ELSE make_timestamp(CAST(heartbeat / 1000as BIGINT))
             END + INTERVAL 8 HOURS
         AS DATE) as accurate_wita_date
             FROM read_parquet('s3://smartdbucket/datalog/cis_smartd_tbl_iot_scania/**/*.parquet',hive_partitioning=true)
@@ -68,16 +68,23 @@ def get_s3_datalog():
 
         df = conn.sql(
             """
-            SELECT DISTINCT hiveperiod,distrik 
+            SELECT DISTINCT hiveperiod,dstrct_code,accurate_wita_date
             FROM data
             WHERE hiveperiod != accurate_wita_date
         """
         )
 
-    return df.show()
+        df.pl().write_csv(Path("output.csv"))
+        return None
 
 
 def main():
+    # 1. Make a list of keys to fix
+    # 1.1 Iterate list_objects from boto3 on output.csv and get keys list
+    # 2. Read data from those keys
+    # 3. Repartition the data
+    # 4. Delete the keys
+    # 5. Validate the output
     get_s3_datalog()
     return None
 
